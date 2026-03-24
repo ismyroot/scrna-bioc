@@ -5,7 +5,8 @@
 #
 # 说明：若 Quay 等平台导出的 JSON 日志在 Bioc 安装中途出现新的 build-scheduled/pulling，
 #       多为单次 RUN 超时或任务被重试，未必是 R 报错；可将下方安装拆成多段（已拆）并调大构建超时。
-# 若日志报 ggtree「check_linewidth not found」或 magick「libMagick++-6.Q16.so.9 找不到」：见下方预装 ggplot2 / 源码 magick 与 ImageMagick -dev。
+# 若日志报 ggtree「check_linewidth not found」：多为 BiocManager 把 CRAN 指到 P3M 二进制后，依赖链装上了偏旧的 ggplot2，覆盖了上一层的新版。
+#       已在 clusterProfiler 安装前再次从 CRAN 源码重装 ggplot2。magick「libMagick++…so.9 找不到」：见 ImageMagick -dev 与源码 magick。
 #
 # 构建示例：
 #   docker build --build-arg R_INSTALL_NCPUS=8 -t quay.io/1733295510/scrna-bioc:v1 .
@@ -35,19 +36,24 @@ RUN apt-get update \
     libmagickwand-6.q16-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# 预装：升级 ggplot2 + 源码编译 magick（再装 Bioc 富集栈）
+# 预装：ggplot2 固定从 CRAN 源码安装 + 源码编译 magick（再装 Bioc 富集栈）
 RUN R -e "nc <- suppressWarnings(as.integer(Sys.getenv('R_INSTALL_NCPUS', '4'))); \
   nc <- if (is.na(nc) || nc < 1L) 1L else nc; \
   options(Ncpus = nc); \
-  install.packages('ggplot2', repos = 'https://cloud.r-project.org', ask = FALSE, Ncpus = nc); \
+  install.packages('ggplot2', repos = 'https://cloud.r-project.org', type = 'source', ask = FALSE, Ncpus = nc); \
   install.packages('magick', repos = 'https://cloud.r-project.org', type = 'source', ask = FALSE, Ncpus = nc)"
 
 # 分步安装：减轻单次 RUN 时长，避免平台超时；失败时缓存可复用已成功的层。
+# 本段开头再装一次 ggplot2：避免上一 RUN 与 Bioc 依赖解析之间被 P3M 旧二进制覆盖，导致 ggtree 报 check_linewidth not found。
 RUN R -e "nc <- suppressWarnings(as.integer(Sys.getenv('R_INSTALL_NCPUS', '4'))); \
   nc <- if (is.na(nc) || nc < 1L) 1L else nc; \
   options(Ncpus = nc); \
+  install.packages('ggplot2', repos = 'https://cloud.r-project.org', type = 'source', ask = FALSE, Ncpus = nc); \
   BiocManager::install(c('clusterProfiler', 'enrichplot', 'ReactomePA'), \
-    ask = FALSE, update = FALSE, Ncpus = nc)"
+    ask = FALSE, update = FALSE, Ncpus = nc); \
+  stopifnot(requireNamespace('clusterProfiler', quietly = TRUE), \
+    requireNamespace('enrichplot', quietly = TRUE), \
+    requireNamespace('ReactomePA', quietly = TRUE))"
 
 RUN R -e "nc <- suppressWarnings(as.integer(Sys.getenv('R_INSTALL_NCPUS', '4'))); \
   nc <- if (is.na(nc) || nc < 1L) 1L else nc; \
